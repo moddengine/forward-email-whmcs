@@ -66,19 +66,19 @@
             <h3>Forwarders</h3>
             <div class="table-responsive">
                 <table class="table table-striped">
-                    <thead><tr><th>From</th><th>Destination</th><th>Mailbox</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>From</th><th>Destination</th><th>Actions</th></tr></thead>
                     <tbody>
                     {foreach $aliases as $alias}
                         <tr>
                             <td>{$alias.name|escape}@{$domain|escape}</td>
-                            <td>{$alias.recipients_display|escape}</td>
-                            <td>{if $alias.has_imap}Enabled{else}Disabled{/if}</td>
                             <td>
-                                <form method="post" action="index.php?m=forward_email&amp;service_id={$serviceId|escape}" class="form-inline" style="display:inline-block">
+                                <input class="form-control input-sm" type="email" name="destination" value="{$alias.recipients_display|escape}" form="forward-email-update-{$alias.id|escape}" required maxlength="254" aria-label="Destination for {$alias.name|escape}">
+                            </td>
+                            <td>
+                                <form id="forward-email-update-{$alias.id|escape}" method="post" action="index.php?m=forward_email&amp;service_id={$serviceId|escape}" style="display:inline-block">
                                     <input type="hidden" name="token" value="{$token|escape}">
                                     <input type="hidden" name="action" value="update_alias">
                                     <input type="hidden" name="alias_id" value="{$alias.id|escape}">
-                                    <input class="form-control input-sm" type="email" name="destination" required maxlength="254" placeholder="New destination" aria-label="New destination for {$alias.name|escape}">
                                     <button class="btn btn-warning btn-sm" type="submit">Update</button>
                                 </form>
                                 <form method="post" action="index.php?m=forward_email&amp;service_id={$serviceId|escape}" style="display:inline-block" onsubmit="return confirm('Delete this forwarder?')">
@@ -90,47 +90,48 @@
                             </td>
                         </tr>
                     {foreachelse}
-                        <tr><td colspan="4">No forwarders configured.</td></tr>
+                        <tr><td colspan="3">No forwarders configured.</td></tr>
                     {/foreach}
                     </tbody>
                 </table>
             </div>
 
-            {if $state.status == 'active' && $senderDnsRecords}
+            {if $state.status == 'active' && !$state.sender_dns_configured_at && $senderDnsRecords}
                 <hr>
-                <h3>Sender Verification</h3>
-                <div class="alert alert-warning" role="alert">
-                    <strong>This overwrites sender-authentication DNS.</strong>
-                    The following SPF, DKIM, Return-Path, and DMARC records will replace conflicting records. WHMCS will not remove or restore them later.
-                    <ul>
-                    {foreach $senderDnsRecords as $record}
-                        <li><code>{$record.name|escape} {$record.type|escape} {$record.value|escape}</code></li>
-                    {/foreach}
-                    </ul>
-                </div>
-                {if $state.sender_dns_configured_at}
-                    <p>Last configured: {$state.sender_dns_configured_at|escape}. Re-running refreshes the records from Forward Email.</p>
-                {/if}
-                <form method="post" action="index.php?m=forward_email&amp;service_id={$serviceId|escape}">
-                    <input type="hidden" name="token" value="{$token|escape}">
-                    <input type="hidden" name="action" value="configure_sender_dns">
-                    <div class="checkbox">
-                        <label><input type="checkbox" name="confirm_sender_dns" value="yes" required> I understand these sender DNS records will be overwritten and must be maintained or removed manually.</label>
+                <details>
+                    <summary><strong>Sender Verification</strong></summary>
+                    <div class="alert alert-warning" role="alert">
+                        <strong>This overwrites sender-authentication DNS.</strong>
+                        The following SPF, DKIM, Return-Path, and DMARC records will replace conflicting records. WHMCS will not remove or restore them later.
+                        <ul>
+                        {foreach $senderDnsRecords as $record}
+                            <li><code>{$record.name|escape} {$record.type|escape} {$record.value|escape}</code></li>
+                        {/foreach}
+                        </ul>
                     </div>
-                    <button class="btn btn-warning" type="submit">Configure Sender Verification</button>
-                </form>
+                    <form method="post" action="index.php?m=forward_email&amp;service_id={$serviceId|escape}">
+                        <input type="hidden" name="token" value="{$token|escape}">
+                        <input type="hidden" name="action" value="configure_sender_dns">
+                        <div class="checkbox">
+                            <label><input type="checkbox" name="confirm_sender_dns" value="yes" required> I understand these sender DNS records will be overwritten and must be maintained or removed manually.</label>
+                        </div>
+                        <button class="btn btn-warning" type="submit">Configure Sender Verification</button>
+                    </form>
+                </details>
             {/if}
         {/if}
 
         <hr>
-        <h3>Disable Email Forwarding</h3>
-        <p>This permanently deletes the Forward Email domain, all forwarders, and managed forwarding DNS records. Previous mail records remain only in customer notes. Sender-verification DNS is not removed.</p>
-        <form method="post" action="index.php?m=forward_email&amp;service_id={$serviceId|escape}">
-            <input type="hidden" name="token" value="{$token|escape}">
-            <input type="hidden" name="action" value="disable">
-            <label for="forward-email-disable">Enter <code>{$domain|escape}</code> to confirm:</label>
-            <input id="forward-email-disable" class="form-control" name="confirm_disable" required autocomplete="off">
-            <button class="btn btn-danger" type="submit" style="margin-top:10px">Disable and Delete</button>
-        </form>
+        <details>
+            <summary><strong>Disable Email Forwarding</strong></summary>
+            <p>This permanently deletes the Forward Email domain, all forwarders, and managed forwarding DNS records. Previous mail records remain only in customer notes. Sender-verification DNS is not removed.</p>
+            <form method="post" action="index.php?m=forward_email&amp;service_id={$serviceId|escape}">
+                <input type="hidden" name="token" value="{$token|escape}">
+                <input type="hidden" name="action" value="disable">
+                <label for="forward-email-disable">Enter <code>{$domain|escape}</code> to confirm:</label>
+                <input id="forward-email-disable" class="form-control" name="confirm_disable" required autocomplete="off">
+                <button class="btn btn-danger" type="submit" style="margin-top:10px">Disable and Delete</button>
+            </form>
+        </details>
     {/if}
 {/if}

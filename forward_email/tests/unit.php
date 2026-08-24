@@ -81,6 +81,21 @@ check(forward_email_catchall_ids($aliases) === ['1'], 'Catch-all alias was not s
 check(forward_email_recipients_display($aliases[1]['recipients']) === 'one@example.net, two@example.net', 'Recipients were not displayed safely.');
 check(!forward_email_valid_local_part('*') && forward_email_valid_local_part('sales'), 'Catch-all local part validation failed.');
 check(forward_email_valid_destination('user@example.net') && !forward_email_valid_destination('invalid'), 'Destination validation failed.');
+check(forward_email_decode_api_response('Domain is verified.', 200, true) === [],
+    'Successful text verification response was rejected.');
+try {
+    forward_email_decode_api_response('Domain is verified.', 200);
+    throw new RuntimeException('Text responses were accepted for regular API requests.');
+} catch (ForwardEmailApiException $e) {
+    check($e->httpStatus === 200, 'Invalid API response status was not preserved.');
+}
+try {
+    forward_email_decode_api_response('{"message":"DNS is pending."}', 400, true);
+    throw new RuntimeException('Verification error response was accepted as success.');
+} catch (ForwardEmailApiException $e) {
+    check($e->httpStatus === 400 && $e->getMessage() === 'DNS is pending.',
+        'Verification error response was not preserved.');
+}
 
 foreach ([[], ['verification_record' => '']] as $invalid) {
     try {
@@ -110,6 +125,17 @@ check(strpos($source, 'forward_email_remove_catchalls($apiKey, $domain);')
     'Catch-all removal must happen before DNS mutation.');
 check(substr_count($template, '<form') === substr_count($template, 'name="token"'),
     'Every client POST form must include a CSRF token.');
+check(str_contains($template, '!$state.sender_dns_configured_at'),
+    'Completed sender verification must be hidden.');
+check(str_contains($template, 'name="destination" value="{$alias.recipients_display|escape}"'),
+    'Forwarder destination fields must be preloaded.');
+check(str_contains($template, 'form="forward-email-update-{$alias.id|escape}"'),
+    'Forwarder destination fields must submit through their row update form.');
+check(!str_contains($template, '<th>Mailbox</th>'), 'The unused mailbox column must be hidden.');
+check(str_contains($template, '<summary><strong>Disable Email Forwarding</strong></summary>'),
+    'Disabling email forwarding must require expanding its section.');
+check(str_contains($template, '<summary><strong>Sender Verification</strong></summary>'),
+    'Sender verification must require expanding its section.');
 check(str_contains($source, "'forcessl' => true"), 'The client page must require HTTPS.');
 check(!str_contains($source, "\$_REQUEST['service_id']"), 'Service selection must not use $_REQUEST.');
 check(substr_count($source, 'forward_email_remote_verified($apiKey, $domain)') === 1,

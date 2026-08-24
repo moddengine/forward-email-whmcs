@@ -31,7 +31,7 @@ function forward_email_config(): array
         'description' => 'Email forwarding for hosting services using Forward Email and WHMCS-DNS',
         'author' => 'Modd Engine',
         'language' => 'english',
-        'version' => '1.2.0',
+        'version' => '1.3.0',
         'fields' => [
             'api_key' => [
                 'FriendlyName' => 'Forward Email API Key',
@@ -197,7 +197,13 @@ function forward_email_api_key(): string
  * @param array<string, scalar|array<int, string>>|null $data
  * @return array<string, mixed>|array<int, mixed>
  */
-function forward_email_api_request(string $apiKey, string $method, string $path, ?array $data = null): array
+function forward_email_api_request(
+    string $apiKey,
+    string $method,
+    string $path,
+    ?array $data = null,
+    bool $allowTextSuccess = false
+): array
 {
     $curl = curl_init(FORWARD_EMAIL_API_BASE . $path);
     if ($curl === false) {
@@ -229,6 +235,12 @@ function forward_email_api_request(string $apiKey, string $method, string $path,
     if ($response === false) {
         throw new ForwardEmailApiException('Forward Email request failed: ' . $error);
     }
+    return forward_email_decode_api_response($response, $status, $allowTextSuccess);
+}
+
+/** @return array<string, mixed>|array<int, mixed> */
+function forward_email_decode_api_response(string $response, int $status, bool $allowTextSuccess = false): array
+{
     if ($response === '' && $status >= 200 && $status < 300) {
         return [];
     }
@@ -236,9 +248,15 @@ function forward_email_api_request(string $apiKey, string $method, string $path,
     try {
         $body = json_decode($response, true, 32, JSON_THROW_ON_ERROR);
     } catch (JsonException $e) {
+        if ($allowTextSuccess && $status >= 200 && $status < 300) {
+            return [];
+        }
         throw new ForwardEmailApiException('Forward Email returned invalid JSON.', $status);
     }
     if (!is_array($body)) {
+        if ($allowTextSuccess && $status >= 200 && $status < 300) {
+            return [];
+        }
         throw new ForwardEmailApiException('Forward Email returned an invalid response.', $status);
     }
     if ($status < 200 || $status >= 300) {
@@ -264,8 +282,21 @@ function forward_email_get_domain(string $apiKey, string $domain): ?array
 
 function forward_email_remote_verified(string $apiKey, string $domain): bool
 {
-    $result = forward_email_api_request($apiKey, 'GET', '/v1/domains/' . rawurlencode($domain) . '/verify-records');
-    return ($result['has_mx_record'] ?? false) === true && ($result['has_txt_record'] ?? false) === true;
+    try {
+        forward_email_api_request(
+            $apiKey,
+            'GET',
+            '/v1/domains/' . rawurlencode($domain) . '/verify-records',
+            null,
+            true
+        );
+        return true;
+    } catch (ForwardEmailApiException $e) {
+        if ($e->httpStatus === 400) {
+            return false;
+        }
+        throw $e;
+    }
 }
 
 /** @return array<int, array<string, mixed>> */
@@ -1121,7 +1152,7 @@ function forward_email_clientarea(array $vars): array
             return $alias;
         }, forward_email_list_aliases($apiKey, $domain)) : [];
         $senderDnsRecords = [];
-        if ($row && $row->status === 'active') {
+        if ($row && $row->status === 'active' && empty($row->sender_dns_configured_at)) {
             $remote = forward_email_get_domain($apiKey, $domain);
             if ($remote && (string) ($remote['id'] ?? '') === (string) $row->forward_email_id) {
                 $senderDnsRecords = forward_email_sender_dns_records($remote);
