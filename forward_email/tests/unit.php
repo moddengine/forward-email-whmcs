@@ -112,5 +112,7 @@ check(substr_count($template, '<form') === substr_count($template, 'name="token"
     'Every client POST form must include a CSRF token.');
 check(str_contains($source, "'forcessl' => true"), 'The client page must require HTTPS.');
 check(!str_contains($source, "\$_REQUEST['service_id']"), 'Service selection must not use $_REQUEST.');
+check(substr_count($source, 'forward_email_remote_verified($apiKey, $domain)') === 1,
+    'Admin connection must not trigger Forward Email DNS re-verification.');
 
 echo "Forward Email unit checks passed.\n";

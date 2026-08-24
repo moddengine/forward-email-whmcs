@@ -31,7 +31,7 @@ function forward_email_config(): array
         'description' => 'Email forwarding for hosting services using Forward Email and WHMCS-DNS',
         'author' => 'Modd Engine',
         'language' => 'english',
-        'version' => '1.1.1',
+        'version' => '1.2.0',
         'fields' => [
             'api_key' => [
                 'FriendlyName' => 'Forward Email API Key',
@@ -823,7 +823,8 @@ function forward_email_admin_connect(string $domain, int $serviceId, string $api
     if (!$remote || !is_string($remote['id'] ?? null) || $remote['id'] === '') {
         throw new InvalidArgumentException('The Forward Email domain does not exist.');
     }
-    $status = forward_email_remote_verified($apiKey, $domain) ? 'active' : 'connected';
+    $status = ($remote['has_mx_record'] ?? false) === true && ($remote['has_txt_record'] ?? false) === true
+        ? 'active' : 'connected';
     $now = date('Y-m-d H:i:s');
     $row = Capsule::table(FORWARD_EMAIL_TABLE_DOMAINS)->where('domain_name', $domain)->first();
     $values = [
