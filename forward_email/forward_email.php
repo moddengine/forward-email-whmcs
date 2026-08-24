@@ -7,12 +7,13 @@ if (!defined('WHMCS')) {
 use WHMCS\Database\Capsule;
 use WHMCS\Module\Addon\Setting;
 
-const FORWARD_EMAIL_TABLE_DOMAINS = 'mod_forward_email_domains';
-const FORWARD_EMAIL_TABLE_RATE_LIMITS = 'mod_forward_email_rate_limits';
-const FORWARD_EMAIL_MUTATION_LIMIT = 30;
-const FORWARD_EMAIL_MUTATION_WINDOW = 60;
-const FORWARD_EMAIL_OPERATION_LEASE = 900;
-const FORWARD_EMAIL_API_BASE = 'https://api.forwardemail.net';
+if (!function_exists('forward_email_config')) {
+define('FORWARD_EMAIL_TABLE_DOMAINS', 'mod_forward_email_domains');
+define('FORWARD_EMAIL_TABLE_RATE_LIMITS', 'mod_forward_email_rate_limits');
+define('FORWARD_EMAIL_MUTATION_LIMIT', 30);
+define('FORWARD_EMAIL_MUTATION_WINDOW', 60);
+define('FORWARD_EMAIL_OPERATION_LEASE', 900);
+define('FORWARD_EMAIL_API_BASE', 'https://api.forwardemail.net');
 
 final class ForwardEmailApiException extends RuntimeException
 {
@@ -30,7 +31,7 @@ function forward_email_config(): array
         'description' => 'Email forwarding for hosting services using Forward Email and WHMCS-DNS',
         'author' => 'Modd Engine',
         'language' => 'english',
-        'version' => '1.1.0',
+        'version' => '1.1.1',
         'fields' => [
             'api_key' => [
                 'FriendlyName' => 'Forward Email API Key',
@@ -1151,4 +1152,5 @@ function forward_email_clientarea(array $vars): array
             ? $e->getMessage() : 'Email forwarding is temporarily unavailable.'];
     }
     return $page;
+}
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 define('WHMCS', true);
 require dirname(__DIR__) . '/forward_email.php';
+require dirname(__DIR__) . '/forward_email.php';
 
 function check(bool $condition, string $message): void
 {
