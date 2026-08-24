@@ -1,0 +1,7 @@
+parameters:
+    level: 6
+    paths:
+        - forward_email.php
+        - hooks.php
+    scanFiles:
+        - stubs/whmcs.php

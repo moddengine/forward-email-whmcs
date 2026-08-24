@@ -1,0 +1,18 @@
+{
+    "schema": "1.0",
+    "type": "whmcs-addons",
+    "name": "Forward Email",
+    "license": "MIT",
+    "category": "utilities",
+    "description": {
+        "name": "Forward Email",
+        "tagline": "Email forwarding for WHMCS hosting services",
+        "long": "Manage Forward Email domains and aliases through WHMCS using WHMCS-DNS for DNS changes."
+    },
+    "authors": [
+        {
+            "name": "Modd Engine"
+        }
+    ],
+    "version": "1.1.0"
+}
