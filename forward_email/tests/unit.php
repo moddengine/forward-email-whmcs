@@ -125,7 +125,7 @@ check(strpos($source, 'forward_email_remove_catchalls($apiKey, $domain);')
     'Catch-all removal must happen before DNS mutation.');
 check(substr_count($template, '<form') === substr_count($template, 'name="token"'),
     'Every client POST form must include a CSRF token.');
-check(str_contains($template, '!$state.sender_dns_configured_at'),
+check(str_contains($template, '!$senderDnsVerified'),
     'Completed sender verification must be hidden.');
 check(str_contains($template, 'name="destination" value="{$alias.recipients_display|escape}"'),
     'Forwarder destination fields must be preloaded.');
@@ -134,8 +134,13 @@ check(str_contains($template, 'form="forward-email-update-{$alias.id|escape}"'),
 check(!str_contains($template, '<th>Mailbox</th>'), 'The unused mailbox column must be hidden.');
 check(str_contains($template, '<summary><strong>Disable Email Forwarding</strong></summary>'),
     'Disabling email forwarding must require expanding its section.');
-check(str_contains($template, '<summary><strong>Sender Verification</strong></summary>'),
+check(str_contains($template, '<summary><strong>Sender Verification</strong> <span class="label label-warning">{if $state.sender_dns_configured_at}Pending{else}Required{/if}</span></summary>'),
     'Sender verification must require expanding its section.');
+check(str_contains($template, 'name="action" value="verify_sender_dns"'),
+    'Pending sender verification must offer a retry action.');
+check(str_contains($template, '<thead><tr><th>Name</th><th>Type</th><th>Value</th></tr></thead>'),
+    'Sender DNS records must be displayed in readable columns.');
+check(str_contains($source, "'/verify-smtp'"), 'Sender DNS verification must call Forward Email.');
 check(str_contains($source, "'forcessl' => true"), 'The client page must require HTTPS.');
 check(!str_contains($source, "\$_REQUEST['service_id']"), 'Service selection must not use $_REQUEST.');
 check(substr_count($source, 'forward_email_remote_verified($apiKey, $domain)') === 1,

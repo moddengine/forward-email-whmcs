@@ -96,26 +96,44 @@
                 </table>
             </div>
 
-            {if $state.status == 'active' && !$state.sender_dns_configured_at && $senderDnsRecords}
+            {if $state.status == 'active' && !$senderDnsVerified && $senderDnsRecords}
                 <hr>
                 <details>
-                    <summary><strong>Sender Verification</strong></summary>
+                    <summary><strong>Sender Verification</strong> <span class="label label-warning">{if $state.sender_dns_configured_at}Pending{else}Required{/if}</span></summary>
                     <div class="alert alert-warning" role="alert">
-                        <strong>This overwrites sender-authentication DNS.</strong>
-                        The following SPF, DKIM, Return-Path, and DMARC records will replace conflicting records. WHMCS will not remove or restore them later.
-                        <ul>
-                        {foreach $senderDnsRecords as $record}
-                            <li><code>{$record.name|escape} {$record.type|escape} {$record.value|escape}</code></li>
-                        {/foreach}
-                        </ul>
+                        {if $state.sender_dns_configured_at}
+                            <strong>Forward Email has not verified these records yet.</strong> DNS changes may take time to propagate.
+                        {else}
+                            <strong>This overwrites sender-authentication DNS.</strong>
+                            The following SPF, DKIM, Return-Path, and DMARC records will replace conflicting records. WHMCS will not remove or restore them later.
+                        {/if}
+                        <div class="table-responsive">
+                            <table class="table table-condensed" style="margin-bottom:0">
+                                <thead><tr><th>Name</th><th>Type</th><th>Value</th></tr></thead>
+                                <tbody>
+                                {foreach $senderDnsRecords as $record}
+                                    <tr>
+                                        <td><code>{$record.name|escape}</code></td>
+                                        <td><code>{$record.type|escape}</code></td>
+                                        <td><code style="white-space:normal;word-break:break-all">{$record.value|escape}</code></td>
+                                    </tr>
+                                {/foreach}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                     <form method="post" action="index.php?m=forward_email&amp;service_id={$serviceId|escape}">
                         <input type="hidden" name="token" value="{$token|escape}">
-                        <input type="hidden" name="action" value="configure_sender_dns">
-                        <div class="checkbox">
-                            <label><input type="checkbox" name="confirm_sender_dns" value="yes" required> I understand these sender DNS records will be overwritten and must be maintained or removed manually.</label>
-                        </div>
-                        <button class="btn btn-warning" type="submit">Configure Sender Verification</button>
+                        {if $state.sender_dns_configured_at}
+                            <input type="hidden" name="action" value="verify_sender_dns">
+                            <button class="btn btn-default" type="submit">Retry Sender Verification</button>
+                        {else}
+                            <input type="hidden" name="action" value="configure_sender_dns">
+                            <div class="checkbox">
+                                <label><input type="checkbox" name="confirm_sender_dns" value="yes" required> I understand these sender DNS records will be overwritten and must be maintained or removed manually.</label>
+                            </div>
+                            <button class="btn btn-warning" type="submit">Configure Sender Verification</button>
+                        {/if}
                     </form>
                 </details>
             {/if}

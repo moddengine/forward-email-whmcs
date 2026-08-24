@@ -31,7 +31,7 @@ function forward_email_config(): array
         'description' => 'Email forwarding for hosting services using Forward Email and WHMCS-DNS',
         'author' => 'Modd Engine',
         'language' => 'english',
-        'version' => '1.3.0',
+        'version' => '1.4.0',
         'fields' => [
             'api_key' => [
                 'FriendlyName' => 'Forward Email API Key',
@@ -282,14 +282,24 @@ function forward_email_get_domain(string $apiKey, string $domain): ?array
 
 function forward_email_remote_verified(string $apiKey, string $domain): bool
 {
+    return forward_email_verification_request(
+        $apiKey,
+        '/v1/domains/' . rawurlencode($domain) . '/verify-records'
+    );
+}
+
+function forward_email_sender_verified(string $apiKey, string $domain): bool
+{
+    return forward_email_verification_request(
+        $apiKey,
+        '/v1/domains/' . rawurlencode($domain) . '/verify-smtp'
+    );
+}
+
+function forward_email_verification_request(string $apiKey, string $path): bool
+{
     try {
-        forward_email_api_request(
-            $apiKey,
-            'GET',
-            '/v1/domains/' . rawurlencode($domain) . '/verify-records',
-            null,
-            true
-        );
+        forward_email_api_request($apiKey, 'GET', $path, null, true);
         return true;
     } catch (ForwardEmailApiException $e) {
         if ($e->httpStatus === 400) {
@@ -743,7 +753,7 @@ function forward_email_enable_domain(int $clientId, string $domain, string $apiK
     return forward_email_verify_domain($clientId, $domain, $apiKey);
 }
 
-function forward_email_configure_sender_dns(int $clientId, string $domain, string $apiKey): void
+function forward_email_configure_sender_dns(int $clientId, string $domain, string $apiKey): bool
 {
     forward_email_load_dns();
     $row = forward_email_domain_row($clientId, $domain);
@@ -767,6 +777,7 @@ function forward_email_configure_sender_dns(int $clientId, string $domain, strin
         'sender_dns_configured_at' => date('Y-m-d H:i:s'),
         'last_error' => null,
     ]);
+    return forward_email_sender_verified($apiKey, $domain);
 }
 
 function forward_email_disable_domain(int $clientId, string $domain, string $apiKey): void
@@ -1008,7 +1019,7 @@ function forward_email_clientarea(array $vars): array
         'requirelogin' => true,
         'forcessl' => true,
         'vars' => ['available' => false, 'message' => null, 'domain' => '', 'serviceId' => 0,
-            'state' => null, 'aliases' => [], 'senderDnsRecords' => []],
+            'state' => null, 'aliases' => [], 'senderDnsRecords' => [], 'senderDnsVerified' => false],
     ];
     if (empty($_SESSION['uid'])) {
         return $page;
@@ -1125,11 +1136,19 @@ function forward_email_clientarea(array $vars): array
                 if (($_POST['confirm_sender_dns'] ?? '') !== 'yes') {
                     throw new InvalidArgumentException('You must acknowledge the sender DNS replacement warning.');
                 }
-                forward_email_with_operation($clientId, $domain, 'sender_dns', ['active'],
-                    static function () use ($clientId, $domain, $apiKey): void {
-                        forward_email_configure_sender_dns($clientId, $domain, $apiKey);
-                    });
-                $message = ['type' => 'success', 'text' => 'Sender verification DNS configured. Future removal is manual.'];
+                $verified = forward_email_with_operation($clientId, $domain, 'sender_dns', ['active'],
+                    static fn (): bool => forward_email_configure_sender_dns($clientId, $domain, $apiKey));
+                $message = ['type' => 'success', 'text' => $verified
+                    ? 'Sender DNS configured and verified.'
+                    : 'Sender DNS configured; verification is pending.'];
+            } elseif ($action === 'verify_sender_dns') {
+                if (empty($existing->sender_dns_configured_at)) {
+                    throw new InvalidArgumentException('Configure sender DNS before retrying verification.');
+                }
+                $verified = forward_email_with_operation($clientId, $domain, 'sender_verify', ['active'],
+                    static fn (): bool => forward_email_sender_verified($apiKey, $domain));
+                $message = ['type' => 'success', 'text' => $verified
+                    ? 'Sender DNS verified.' : 'Sender DNS verification is still pending.'];
             } elseif ($action === 'disable') {
                 if (($_POST['confirm_disable'] ?? '') !== $domain) {
                     throw new InvalidArgumentException('Enter the domain name to confirm disabling.');
@@ -1152,9 +1171,11 @@ function forward_email_clientarea(array $vars): array
             return $alias;
         }, forward_email_list_aliases($apiKey, $domain)) : [];
         $senderDnsRecords = [];
-        if ($row && $row->status === 'active' && empty($row->sender_dns_configured_at)) {
+        $senderDnsVerified = false;
+        if ($row && $row->status === 'active') {
             $remote = forward_email_get_domain($apiKey, $domain);
             if ($remote && (string) ($remote['id'] ?? '') === (string) $row->forward_email_id) {
+                $senderDnsVerified = !empty($remote['smtp_verified_at']);
                 $senderDnsRecords = forward_email_sender_dns_records($remote);
             }
         }
@@ -1166,11 +1187,13 @@ function forward_email_clientarea(array $vars): array
             'state' => $row ? (array) $row : null,
             'aliases' => $aliases,
             'senderDnsRecords' => $senderDnsRecords,
+            'senderDnsVerified' => $senderDnsVerified,
             'token' => generate_token('plain'),
         ];
     } catch (Throwable $e) {
         if (isset($domain) && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST'
-            && in_array((string) ($_POST['action'] ?? ''), ['enable', 'verify', 'configure_sender_dns', 'disable'], true)) {
+            && in_array((string) ($_POST['action'] ?? ''),
+                ['enable', 'verify', 'configure_sender_dns', 'verify_sender_dns', 'disable'], true)) {
             $failedRow = Capsule::table(FORWARD_EMAIL_TABLE_DOMAINS)->where('domain_name', $domain)->first();
             if ($failedRow && (int) $failedRow->client_id === $clientId) {
                 Capsule::table(FORWARD_EMAIL_TABLE_DOMAINS)->where('id', $failedRow->id)->update([
