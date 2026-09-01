@@ -31,13 +31,19 @@ function forward_email_config(): array
         'description' => 'Email forwarding for hosting services using Forward Email and WHMCS-DNS',
         'author' => 'Modd Engine',
         'language' => 'english',
-        'version' => '1.4.0',
+        'version' => '1.5.0',
         'fields' => [
             'api_key' => [
                 'FriendlyName' => 'Forward Email API Key',
                 'Type' => 'password',
                 'Size' => '64',
                 'Description' => 'API token from forwardemail.net.',
+            ],
+            'dns_api_key' => [
+                'FriendlyName' => 'WHMCS DNS API Key',
+                'Type' => 'password',
+                'Size' => '64',
+                'Description' => 'WHMCS-DNS automation API key with DNS read and write access.',
             ],
         ],
     ];
@@ -92,16 +98,13 @@ function forward_email_create_tables(): void
 
 function forward_email_backfill_services(): void
 {
-    if (!function_exists('whmcs_dns_registrable_domain')) {
-        return;
-    }
     $rows = Capsule::table(FORWARD_EMAIL_TABLE_DOMAINS)->whereNull('service_id')->get();
     foreach ($rows as $row) {
         $matches = [];
         $services = Capsule::table('tblhosting')->select('id', 'domain')
             ->where('userid', (int) $row->client_id)->where('domainstatus', 'Active')->where('domain', '<>', '')->get();
         foreach ($services as $service) {
-            if (whmcs_dns_registrable_domain((string) $service->domain) === (string) $row->domain_name) {
+            if (forward_email_domain_name((string) $service->domain) === (string) $row->domain_name) {
                 $matches[] = (int) $service->id;
             }
         }
@@ -115,7 +118,6 @@ function forward_email_backfill_services(): void
 function forward_email_activate(): array
 {
     try {
-        forward_email_load_dns();
         forward_email_create_tables();
         return ['status' => 'success', 'description' => 'Forward Email addon activated.'];
     } catch (Throwable $e) {
@@ -135,53 +137,7 @@ function forward_email_deactivate(): array
 /** @param array<string, mixed> $vars */
 function forward_email_upgrade(array $vars): void
 {
-    forward_email_load_dns();
     forward_email_create_tables();
-}
-
-function forward_email_load_dns(): void
-{
-    static $loaded = false;
-    if ($loaded) {
-        return;
-    }
-    if (defined('WHMCSDNS_INTEGRATION_API_VERSION')) {
-        if (!forward_email_supported_dns_version(constant('WHMCSDNS_INTEGRATION_API_VERSION'))) {
-            throw new RuntimeException('WHMCS-DNS integration API version 1 is required.');
-        }
-        forward_email_require_dns_activation();
-        $loaded = true;
-        return;
-    }
-
-    $file = dirname(__DIR__) . '/whmcs_dns/whmcs_dns.php';
-    if (!is_file($file)) {
-        throw new RuntimeException('The WHMCS-DNS addon is required.');
-    }
-    require_once $file;
-
-    $version = defined('WHMCSDNS_INTEGRATION_API_VERSION')
-        ? constant('WHMCSDNS_INTEGRATION_API_VERSION')
-        : null;
-    if (!forward_email_supported_dns_version($version) || !function_exists('whmcs_dns_integration_status')
-        || !function_exists('whmcs_dns_integration_list_records')
-        || !function_exists('whmcs_dns_integration_apply_records')) {
-        throw new RuntimeException('WHMCS-DNS integration API version 1 is required.');
-    }
-    forward_email_require_dns_activation();
-    $loaded = true;
-}
-
-function forward_email_supported_dns_version(mixed $version): bool
-{
-    return $version === 1;
-}
-
-function forward_email_require_dns_activation(): void
-{
-    if (!Capsule::table('tbladdonmodules')->where('module', 'whmcs_dns')->exists()) {
-        throw new RuntimeException('The WHMCS-DNS addon must be activated.');
-    }
 }
 
 function forward_email_api_key(): string
@@ -191,6 +147,21 @@ function forward_email_api_key(): string
         throw new RuntimeException('Forward Email is not configured.');
     }
     return $key;
+}
+
+/** @return array{url: string, key: string} */
+function forward_email_dns_api_config(): array
+{
+    $systemUrl = rtrim((string) (Capsule::table('tblconfiguration')
+        ->where('setting', 'SystemURL')->value('value') ?? ''), '/');
+    $key = (string) (Setting::getSettingValueForModule('forward_email', 'dns_api_key') ?? '');
+    if ($systemUrl === '' || filter_var($systemUrl, FILTER_VALIDATE_URL) === false || $key === '') {
+        throw new RuntimeException('WHMCS DNS API is not configured.');
+    }
+    return [
+        'url' => $systemUrl . '/modules/addons/whmcs_dns/dns.php',
+        'key' => $key,
+    ];
 }
 
 /**
@@ -264,6 +235,268 @@ function forward_email_decode_api_response(string $response, int $status, bool $
         throw new ForwardEmailApiException(is_string($message) ? $message : 'Forward Email rejected the request.', $status);
     }
     return $body;
+}
+
+/**
+ * @param array<string, mixed>|null $data
+ * @return array<string, mixed>|null
+ */
+function forward_email_dns_api_request(string $method, string $fqdn, string $type, ?array $data = null): ?array
+{
+    $config = forward_email_dns_api_config();
+    $url = $config['url'] . '/record/' . rawurlencode($fqdn) . '/' . rawurlencode(strtoupper($type));
+    $curl = curl_init($url);
+    if ($curl === false) {
+        throw new RuntimeException('Could not initialize the WHMCS DNS request.');
+    }
+    curl_setopt_array($curl, [
+        CURLOPT_CUSTOMREQUEST => $method,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_HTTPHEADER => ['Accept: application/json', 'Content-Type: application/json', 'Auth-Key: ' . $config['key']],
+    ]);
+    if ($data !== null) {
+        curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($data, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    }
+    $response = curl_exec($curl);
+    $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+    $error = curl_error($curl);
+    curl_close($curl);
+
+    if ($response === false) {
+        throw new ForwardEmailApiException('WHMCS DNS request failed: ' . $error);
+    }
+    if ($status === 404 && $method === 'GET') {
+        try {
+            $notFound = json_decode($response, true, 16, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            $notFound = [];
+        }
+        if (is_array($notFound) && ($notFound['error'] ?? null) === 'record_not_found') {
+            return null;
+        }
+    }
+    if ($status >= 200 && $status < 300) {
+        if ($response === '') {
+            return [];
+        }
+        try {
+            $body = json_decode($response, true, 16, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            throw new ForwardEmailApiException('WHMCS DNS returned invalid JSON.', $status);
+        }
+        if (!is_array($body)) {
+            throw new ForwardEmailApiException('WHMCS DNS returned an invalid response.', $status);
+        }
+        return $body;
+    }
+    try {
+        $body = json_decode($response, true, 16, JSON_THROW_ON_ERROR);
+    } catch (JsonException) {
+        $body = [];
+    }
+    $message = is_array($body) ? ($body['message'] ?? 'WHMCS DNS rejected the request.')
+        : 'WHMCS DNS rejected the request.';
+    throw new ForwardEmailApiException(is_string($message) ? $message : 'WHMCS DNS rejected the request.', $status);
+}
+
+function forward_email_dns_fqdn(string $domain, string $name): string
+{
+    $name = strtolower(rtrim(trim($name), '.'));
+    return $name === '' || $name === '@' ? $domain : $name . '.' . $domain;
+}
+
+/**
+ * @param array<int, array{name: string, type: string}> $queries
+ * @return array<int, array<string, mixed>>
+ */
+function forward_email_dns_records(string $domain, array $queries): array
+{
+    $records = [];
+    $seen = [];
+    foreach ($queries as $query) {
+        $name = strtolower(rtrim($query['name'], '.')) ?: '@';
+        $type = strtoupper($query['type']);
+        $key = $name . "\0" . $type;
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $rrset = forward_email_dns_api_request('GET', forward_email_dns_fqdn($domain, $name), $type);
+        if ($rrset === null) {
+            continue;
+        }
+        $ttl = filter_var($rrset['ttl'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $values = $rrset['values'] ?? null;
+        if ($ttl === false || !is_array($values) || !array_is_list($values)) {
+            throw new RuntimeException('WHMCS DNS returned an invalid record set.');
+        }
+        foreach ($values as $value) {
+            if (!is_string($value)) {
+                throw new RuntimeException('WHMCS DNS returned an invalid record value.');
+            }
+            $priority = null;
+            if ($type === 'MX') {
+                if (preg_match('/^([0-9]+)\s+(.+)$/D', $value, $matches) !== 1) {
+                    throw new RuntimeException('WHMCS DNS returned an invalid MX record.');
+                }
+                $priority = (int) $matches[1];
+                $value = $matches[2];
+            }
+            $record = forward_email_record($name, $type, $value, $priority);
+            $record['ttl'] = (int) $ttl;
+            $records[] = $record;
+        }
+    }
+    return $records;
+}
+
+/** @param array<string, mixed> $record */
+function forward_email_dns_wire_value(array $record): string
+{
+    return strtoupper((string) ($record['type'] ?? '')) === 'MX'
+        ? (int) ($record['priority'] ?? 0) . ' ' . (string) ($record['value'] ?? '')
+        : (string) ($record['value'] ?? '');
+}
+
+/**
+ * @param array<int, array<string, mixed>> $current
+ * @param array<int, array<string, mixed>> $delete
+ * @param array<int, array<string, mixed>> $upsert
+ */
+function forward_email_dns_apply_records(
+    int $clientId,
+    string $domain,
+    array $current,
+    array $delete,
+    array $upsert,
+    string $operation
+): void {
+    if ($delete !== []) {
+        forward_email_dns_save_replacement_note($clientId, $operation, $domain, $delete);
+    }
+    $groups = [];
+    foreach ($current as $record) {
+        $groups[forward_email_record_group_key($record)][] = $record;
+    }
+    $deleted = array_fill_keys(array_map('forward_email_record_key', $delete), true);
+    foreach ($groups as &$records) {
+        $records = array_values(array_filter(
+            $records,
+            static fn (array $record): bool => !isset($deleted[forward_email_record_key($record)])
+        ));
+    }
+    unset($records);
+    foreach ($upsert as $record) {
+        $group = forward_email_record_group_key($record);
+        $valueKey = forward_email_record_key($record, true);
+        $groups[$group] = array_values(array_filter(
+            $groups[$group] ?? [],
+            static fn (array $existing): bool => forward_email_record_key($existing, true) !== $valueKey
+        ));
+        $groups[$group][] = $record;
+    }
+    $affected = [];
+    foreach (array_merge($delete, $upsert) as $record) {
+        $affected[forward_email_record_group_key($record)] = $record;
+    }
+    foreach ($affected as $group => $record) {
+        $records = $groups[$group] ?? [];
+        $name = strtolower(rtrim((string) ($record['name'] ?? ''), '.')) ?: '@';
+        $type = strtoupper((string) ($record['type'] ?? ''));
+        $fqdn = forward_email_dns_fqdn($domain, $name);
+        if ($records === []) {
+            forward_email_dns_api_request('DELETE', $fqdn, $type);
+            continue;
+        }
+        $ttls = array_values(array_unique(array_map(static fn (array $item): int => (int) $item['ttl'], $records)));
+        if (count($ttls) !== 1) {
+            throw new RuntimeException("DNS records at {$name} must use one TTL.");
+        }
+        $values = array_values(array_unique(array_map('forward_email_dns_wire_value', $records)));
+        forward_email_dns_api_request('PUT', $fqdn, $type, ['ttl' => $ttls[0], 'values' => $values]);
+    }
+}
+
+/** @param array<int, array<string, mixed>> $records */
+function forward_email_dns_save_replacement_note(int $clientId, string $operation, string $domain, array $records): void
+{
+    $lines = ["DNS {$operation} for {$domain} at " . gmdate('c'), 'Deleted/replaced records:'];
+    foreach ($records as $record) {
+        $lines[] = sprintf(
+            '%s %s %s TTL %d%s',
+            (string) $record['type'],
+            (string) $record['name'],
+            (string) $record['value'],
+            (int) $record['ttl'],
+            $record['priority'] === null ? '' : ' priority ' . (int) $record['priority']
+        );
+    }
+    $result = localAPI('AddClientNote', ['userid' => $clientId, 'notes' => implode("\n", $lines), 'sticky' => false]);
+    if (($result['result'] ?? null) !== 'success') {
+        throw new RuntimeException('Could not save replaced DNS records to the client notes.');
+    }
+}
+
+/** @param array<string, mixed> $record */
+function forward_email_record_group_key(array $record): string
+{
+    $name = strtolower(rtrim((string) ($record['name'] ?? ''), '.')) ?: '@';
+    return $name . "\0" . strtoupper((string) ($record['type'] ?? ''));
+}
+
+function forward_email_dns_available(string $domain): bool
+{
+    try {
+        forward_email_dns_api_request('GET', $domain, 'TXT');
+        return true;
+    } catch (ForwardEmailApiException $e) {
+        if ($e->httpStatus === 403) {
+            return false;
+        }
+        throw $e;
+    }
+}
+
+function forward_email_domain_name(string $domain): ?string
+{
+    $domain = strtolower(rtrim(trim($domain), '.'));
+    return $domain !== '' && str_contains($domain, '.') && strlen($domain) <= 253
+        && filter_var($domain, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false ? $domain : null;
+}
+
+/**
+ * @param array<int, array<string, mixed>> $records
+ * @return array<int, array{name: string, type: string}>
+ */
+function forward_email_dns_queries(array $records): array
+{
+    return array_map(static fn (array $record): array => [
+        'name' => (string) $record['name'],
+        'type' => (string) $record['type'],
+    ], $records);
+}
+
+/**
+ * @param array<int, array<string, mixed>> $records
+ * @return array<int, array{name: string, type: string}>
+ */
+function forward_email_sender_dns_queries(array $records): array
+{
+    $queries = forward_email_dns_queries($records);
+    foreach ($records as $record) {
+        $name = (string) $record['name'];
+        $type = strtoupper((string) $record['type']);
+        if ($type === 'CNAME') {
+            foreach (['A', 'AAAA', 'CAA', 'CNAME', 'MX', 'NS', 'PTR', 'SRV', 'TXT'] as $conflictType) {
+                $queries[] = ['name' => $name, 'type' => $conflictType];
+            }
+        } elseif (str_contains($name, '._domainkey')) {
+            $queries[] = ['name' => $name, 'type' => 'CNAME'];
+        }
+    }
+    return $queries;
 }
 
 /** @return array<string, mixed>|null */
@@ -474,6 +707,41 @@ function forward_email_record_key(array $record, bool $ignoreTtl = false): strin
 }
 
 /**
+ * @param array<int, array<string, mixed>> $desired
+ * @param array<int, array<string, mixed>> $current
+ * @param array<int, array<string, mixed>> $delete
+ * @return array<int, array<string, mixed>>
+ */
+function forward_email_match_txt_rrset_ttls(array $desired, array $current, array $delete): array
+{
+    $deleted = array_fill_keys(array_map('forward_email_record_key', $delete), true);
+    $ttls = [];
+    foreach ($current as $record) {
+        if (isset($deleted[forward_email_record_key($record)])
+            || strtoupper((string) ($record['type'] ?? '')) !== 'TXT') {
+            continue;
+        }
+        $name = strtolower(rtrim((string) ($record['name'] ?? $record['host'] ?? ''), '.')) ?: '@';
+        $ttls[$name][(int) ($record['ttl'] ?? 3600)] = true;
+    }
+    foreach ($desired as &$record) {
+        if (strtoupper((string) ($record['type'] ?? '')) !== 'TXT') {
+            continue;
+        }
+        $name = strtolower(rtrim((string) ($record['name'] ?? ''), '.')) ?: '@';
+        $existing = array_keys($ttls[$name] ?? []);
+        if (count($existing) > 1) {
+            throw new RuntimeException("Existing TXT records at {$name} have inconsistent TTLs.");
+        }
+        if ($existing !== []) {
+            $record['ttl'] = $existing[0];
+        }
+    }
+    unset($record);
+    return $desired;
+}
+
+/**
  * @param array<int, array<string, mixed>> $current
  * @param array<int, array<string, mixed>> $desired
  * @return array<int, array<string, mixed>>
@@ -602,8 +870,7 @@ function forward_email_service_context(int $clientId, int $serviceId, bool $acti
     if (!$service || ($activeOnly && $service->domainstatus !== 'Active')) {
         return null;
     }
-    forward_email_load_dns();
-    $domain = whmcs_dns_registrable_domain((string) $service->domain);
+    $domain = forward_email_domain_name((string) $service->domain);
     return $domain === null ? null : [
         'client_id' => (int) $service->userid,
         'service_id' => $serviceId,
@@ -704,13 +971,11 @@ function forward_email_verify_domain(int $clientId, string $domain, string $apiK
 
 function forward_email_enable_domain(int $clientId, string $domain, string $apiKey): bool
 {
-    forward_email_load_dns();
     $row = forward_email_domain_row($clientId, $domain);
     if (!$row || forward_email_row_context($row) === null) {
         throw new RuntimeException('This forwarding domain is not connected to an active WHMCS service.');
     }
-    $status = whmcs_dns_integration_status($clientId, $domain);
-    if (($status['enabled'] ?? false) !== true) {
+    if (!forward_email_dns_available($domain)) {
         throw new RuntimeException('DNS must be enabled for this domain first.');
     }
 
@@ -739,9 +1004,11 @@ function forward_email_enable_domain(int $clientId, string $domain, string $apiK
     forward_email_remove_catchalls($apiKey, $domain);
     $remote = forward_email_get_domain($apiKey, $domain) ?? $remote;
     $desired = forward_email_forwarding_dns_records($remote);
-    $current = whmcs_dns_integration_list_records($clientId, $domain);
+    $current = forward_email_dns_records($domain, forward_email_dns_queries($desired));
     $delete = forward_email_dns_delete_plan($current, $desired);
-    whmcs_dns_integration_apply_records($clientId, $domain, $delete, $desired, 'enable');
+    $desired = forward_email_match_txt_rrset_ttls($desired, $current, $delete);
+    $delete = forward_email_dns_delete_plan($current, $desired);
+    forward_email_dns_apply_records($clientId, $domain, $current, $delete, $desired, 'enable');
 
     forward_email_save_domain($clientId, $domain, [
         'forward_email_id' => (string) $remote['id'],
@@ -755,7 +1022,6 @@ function forward_email_enable_domain(int $clientId, string $domain, string $apiK
 
 function forward_email_configure_sender_dns(int $clientId, string $domain, string $apiKey): bool
 {
-    forward_email_load_dns();
     $row = forward_email_domain_row($clientId, $domain);
     if (!$row || forward_email_row_context($row) === null || $row->status !== 'active') {
         throw new RuntimeException('Active email forwarding is required before configuring sender verification.');
@@ -765,10 +1031,13 @@ function forward_email_configure_sender_dns(int $clientId, string $domain, strin
         throw new RuntimeException('The connected Forward Email domain is unavailable.');
     }
     $desired = forward_email_sender_dns_records($remote);
-    $current = whmcs_dns_integration_list_records($clientId, $domain);
-    whmcs_dns_integration_apply_records(
+    $current = forward_email_dns_records($domain, forward_email_sender_dns_queries($desired));
+    $delete = forward_email_sender_dns_delete_plan($current, $desired);
+    $desired = forward_email_match_txt_rrset_ttls($desired, $current, $delete);
+    forward_email_dns_apply_records(
         $clientId,
         $domain,
+        $current,
         forward_email_sender_dns_delete_plan($current, $desired),
         $desired,
         'sender_verification'
@@ -782,7 +1051,6 @@ function forward_email_configure_sender_dns(int $clientId, string $domain, strin
 
 function forward_email_disable_domain(int $clientId, string $domain, string $apiKey): void
 {
-    forward_email_load_dns();
     $row = forward_email_domain_row($clientId, $domain);
     if (!$row) {
         return;
@@ -796,12 +1064,12 @@ function forward_email_disable_domain(int $clientId, string $domain, string $api
     if (!is_array($managed)) {
         throw new RuntimeException('Stored DNS state is invalid.');
     }
-    $dnsStatus = whmcs_dns_integration_status($clientId, $domain);
-    if (($dnsStatus['enabled'] ?? false) === true) {
-        $current = whmcs_dns_integration_list_records($clientId, $domain);
-        whmcs_dns_integration_apply_records(
+    if (forward_email_dns_available($domain)) {
+        $current = forward_email_dns_records($domain, forward_email_dns_queries($managed));
+        forward_email_dns_apply_records(
             $clientId,
             $domain,
+            $current,
             forward_email_managed_records_present($current, $managed),
             [],
             'disable'
@@ -842,7 +1110,7 @@ function forward_email_admin_service_options(array $services, string $domain): s
     $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
     $options = '';
     foreach ($services as $service) {
-        if (whmcs_dns_registrable_domain((string) $service->domain) !== $domain) {
+        if (forward_email_domain_name((string) $service->domain) !== $domain) {
             continue;
         }
         $label = '#' . (int) $service->id . ' / client #' . (int) $service->userid . ' — ' . (string) $service->domain;
@@ -854,11 +1122,10 @@ function forward_email_admin_service_options(array $services, string $domain): s
 function forward_email_admin_connect(string $domain, int $serviceId, string $apiKey): string
 {
     $context = forward_email_service_context(0, $serviceId);
-    if (!$context || $context['domain'] !== $domain || !whmcs_dns_can_manage_domains($context['client_id'])) {
-        throw new InvalidArgumentException('Select an active DNS-enabled service for the same registrable domain.');
+    if (!$context || $context['domain'] !== $domain) {
+        throw new InvalidArgumentException('Select an active DNS-enabled service for the same domain.');
     }
-    $dnsStatus = whmcs_dns_integration_status($context['client_id'], $domain);
-    if (($dnsStatus['enabled'] ?? false) !== true) {
+    if (!forward_email_dns_available($domain)) {
         throw new InvalidArgumentException('DNS must be enabled for the selected service domain.');
     }
     $remote = forward_email_get_domain($apiKey, $domain);
@@ -903,7 +1170,6 @@ function forward_email_output(array $vars): void
     $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
     $link = (string) ($vars['modulelink'] ?? 'addonmodules.php?module=forward_email');
     try {
-        forward_email_load_dns();
         $apiKey = forward_email_api_key();
         $notice = null;
         if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
@@ -1028,17 +1294,12 @@ function forward_email_clientarea(array $vars): array
     $clientId = (int) $_SESSION['uid'];
     $serviceId = filter_var($_GET['service_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
     try {
-        forward_email_load_dns();
-        if (!whmcs_dns_can_manage_domains($clientId)) {
-            throw new RuntimeException('You do not have permission to manage domains.');
-        }
         $context = $serviceId === false ? null : forward_email_service_context($clientId, (int) $serviceId);
         if ($context === null) {
             throw new RuntimeException('An active hosting service with a valid domain is required.');
         }
         $domain = $context['domain'];
-        $dnsStatus = whmcs_dns_integration_status($clientId, $domain);
-        if (($dnsStatus['enabled'] ?? false) !== true) {
+        if (!forward_email_dns_available($domain)) {
             throw new RuntimeException('DNS must be enabled for this domain first.');
         }
         $apiKey = forward_email_api_key();

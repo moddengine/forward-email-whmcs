@@ -13,8 +13,10 @@ function check(bool $condition, string $message): void
     }
 }
 
-check(forward_email_supported_dns_version(1) && !forward_email_supported_dns_version(2),
-    'WHMCS-DNS integration version validation failed.');
+$config = forward_email_config();
+check(isset($config['fields']['dns_api_key']), 'WHMCS DNS API key configuration is missing.');
+check(forward_email_domain_name('Example.COM.') === 'example.com' && forward_email_domain_name('invalid') === null,
+    'Service domain validation failed.');
 
 $domain = [
     'id' => 'abc123',
@@ -32,6 +34,9 @@ check($desired[0]['type'] === 'MX' && $desired[0]['priority'] === 0, 'MX record 
 check(count($sender) === 4 && $sender[0]['value'] === 'v=spf1 include:spf.forwardemail.net ~all',
     'Sender verification records are invalid.');
 check($sender[1]['name'] === 'fe-key._domainkey', 'DKIM record is invalid.');
+check(forward_email_dns_wire_value($desired[0]) === '0 mx1.forwardemail.net', 'MX REST value is invalid.');
+check(count(forward_email_sender_dns_queries($sender)) === 14,
+    'Sender REST queries do not cover conflicting RRsets.');
 
 $current = [
     forward_email_record('@', 'MX', 'mail.example.com', 10),
@@ -54,6 +59,26 @@ $changedVerification = $desired[2];
 $changedVerification['ttl'] = 300;
 check(forward_email_dns_delete_plan([$changedVerification], $desired) === [$changedVerification],
     'The exact verification value must be replaced when its stored shape differs.');
+
+$existingTxt = forward_email_record('@', 'TXT', 'unrelated=keep-me');
+$existingTxt['ttl'] = 300;
+$matched = forward_email_match_txt_rrset_ttls($desired, [$existingTxt], []);
+check($matched[2]['ttl'] === 300, 'Forwarding TXT did not reuse the existing RRset TTL.');
+$replacedTxt = forward_email_record('@', 'TXT', 'replace-me');
+$replacedTxt['ttl'] = 300;
+$matched = forward_email_match_txt_rrset_ttls($desired, [$replacedTxt], [$replacedTxt]);
+check($matched[2]['ttl'] === 3600, 'A deleted TXT record incorrectly supplied the RRset TTL.');
+try {
+    $otherTxt = $existingTxt;
+    $otherTxt['value'] = 'another=record';
+    $otherTxt['ttl'] = 600;
+    forward_email_match_txt_rrset_ttls($desired, [$existingTxt, $otherTxt], []);
+    throw new RuntimeException('Inconsistent TXT RRset TTLs were accepted.');
+} catch (RuntimeException $e) {
+    if ($e->getMessage() === 'Inconsistent TXT RRset TTLs were accepted.') {
+        throw $e;
+    }
+}
 
 $senderCurrent = [
     forward_email_record('@', 'TXT', 'v=spf1 include:old.example -all'),
@@ -121,8 +146,10 @@ $template = file_get_contents(dirname(__DIR__) . '/templates/clientarea.tpl');
 check($source !== false && $template !== false, 'Addon source files could not be read.');
 check(str_contains($source, "'catchall' => false"), 'Domain creation must disable the automatic catch-all.');
 check(strpos($source, 'forward_email_remove_catchalls($apiKey, $domain);')
-    < strpos($source, 'whmcs_dns_integration_apply_records($clientId, $domain, $delete'),
+    < strpos($source, "forward_email_dns_apply_records(\$clientId, \$domain, \$current, \$delete, \$desired, 'enable')"),
     'Catch-all removal must happen before DNS mutation.');
+check(str_contains($source, "'Auth-Key: ' . \$config['key']")
+    && !str_contains($source, 'whmcs_dns_integration_'), 'DNS changes must use the authenticated REST API.');
 check(substr_count($template, '<form') === substr_count($template, 'name="token"'),
     'Every client POST form must include a CSRF token.');
 check(str_contains($template, '!$senderDnsVerified'),

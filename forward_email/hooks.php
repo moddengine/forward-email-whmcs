@@ -15,10 +15,6 @@ add_hook('ClientAreaProductDetailsOutput', 1, function ($vars) {
     }
     try {
         $clientId = (int) $_SESSION['uid'];
-        forward_email_load_dns();
-        if (!whmcs_dns_can_manage_domains($clientId)) {
-            return '';
-        }
         $context = forward_email_service_context($clientId, (int) ($service->id ?? 0));
         if ($context === null) {
             return '';
@@ -27,8 +23,7 @@ add_hook('ClientAreaProductDetailsOutput', 1, function ($vars) {
         if ($row && (int) ($row->service_id ?? 0) !== (int) $service->id) {
             return '';
         }
-        $status = whmcs_dns_integration_status($clientId, $context['domain']);
-        if (($status['enabled'] ?? false) !== true) {
+        if (!forward_email_dns_available($context['domain'])) {
             return '';
         }
         forward_email_api_key();
@@ -43,7 +38,6 @@ add_hook('ClientAreaProductDetailsOutput', 1, function ($vars) {
 
 add_hook('AfterCronJob', 1, function (): void {
     try {
-        forward_email_load_dns();
         $apiKey = forward_email_api_key();
         $rows = Capsule::table(FORWARD_EMAIL_TABLE_DOMAINS)
             ->whereIn('status', ['enabling', 'pending_verification', 'disabling'])

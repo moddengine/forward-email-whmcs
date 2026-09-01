@@ -7,12 +7,12 @@
     "description": {
         "name": "Forward Email",
         "tagline": "Email forwarding for WHMCS hosting services",
-        "long": "Manage Forward Email domains and aliases through WHMCS using WHMCS-DNS for DNS changes."
+        "long": "Manage Forward Email domains and aliases through WHMCS using the WHMCS-DNS REST API for DNS changes."
     },
     "authors": [
         {
             "name": "Modd Engine"
         }
     ],
-    "version": "1.4.0"
+    "version": "1.5.0"
 }

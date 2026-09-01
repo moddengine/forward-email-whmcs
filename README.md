@@ -21,12 +21,12 @@ WHMCS addon for managing Forward Email domains and forwarding aliases from activ
 ## Requirements
 
 - PHP 8.3 and WHMCS 8.13 or newer.
-- The sibling `whmcs_dns` addon with integration API version 1, activated and configured.
+- The `whmcs_dns` addon REST API, with an automation key granting DNS read and write access to eligible domains.
 - A Forward Email API key.
 
 ## Install
 
-Copy `forward_email/` to `modules/addons/forward_email/`, activate **Forward Email** in WHMCS, and configure its API key. Email forwarding appears on active hosting-service pages only when WHMCS-DNS already manages the registrable domain.
+Copy `forward_email/` to `modules/addons/forward_email/`, activate **Forward Email** in WHMCS, and configure the Forward Email and WHMCS DNS API keys. Email forwarding appears on active hosting-service pages only when the API key can manage the service domain.
 
 ## Behavior and limitations
 
