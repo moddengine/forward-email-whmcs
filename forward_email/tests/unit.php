@@ -105,7 +105,8 @@ $aliases = forward_email_alias_rows([
 check(forward_email_catchall_ids($aliases) === ['1'], 'Catch-all alias was not selected.');
 check(forward_email_recipients_display($aliases[1]['recipients']) === 'one@example.net, two@example.net', 'Recipients were not displayed safely.');
 check(!forward_email_valid_local_part('*') && forward_email_valid_local_part('sales'), 'Catch-all local part validation failed.');
-check(forward_email_valid_destination('user@example.net') && !forward_email_valid_destination('invalid'), 'Destination validation failed.');
+check(forward_email_valid_destination('user@example.net, second@example.net')
+    && !forward_email_valid_destination('user@example.net, invalid'), 'Destination validation failed.');
 check(forward_email_decode_api_response('Domain is verified.', 200, true) === [],
     'Successful text verification response was rejected.');
 try {
@@ -156,6 +157,8 @@ check(str_contains($template, '!$senderDnsVerified'),
     'Completed sender verification must be hidden.');
 check(str_contains($template, 'name="destination" value="{$alias.recipients_display|escape}"'),
     'Forwarder destination fields must be preloaded.');
+check(substr_count($template, 'type="email" name="destination"') === substr_count($template, 'multiple required'),
+    'Forwarder destination fields must allow multiple email addresses.');
 check(str_contains($template, 'form="forward-email-update-{$alias.id|escape}"'),
     'Forwarder destination fields must submit through their row update form.');
 check(!str_contains($template, '<th>Mailbox</th>'), 'The unused mailbox column must be hidden.');

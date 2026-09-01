@@ -31,7 +31,7 @@ function forward_email_config(): array
         'description' => 'Email forwarding for hosting services using Forward Email and WHMCS-DNS',
         'author' => 'Modd Engine',
         'language' => 'english',
-        'version' => '1.5.0',
+        'version' => '1.5.1',
         'fields' => [
             'api_key' => [
                 'FriendlyName' => 'Forward Email API Key',
@@ -1094,7 +1094,10 @@ function forward_email_valid_local_part(string $value): bool
 
 function forward_email_valid_destination(string $value): bool
 {
-    return filter_var($value, FILTER_VALIDATE_EMAIL) !== false && strlen($value) <= 254;
+    $destinations = array_map('trim', explode(',', $value));
+    return count(array_filter($destinations, static fn (string $destination): bool =>
+        filter_var($destination, FILTER_VALIDATE_EMAIL) !== false && strlen($destination) <= 254
+    )) === count($destinations);
 }
 
 /** @return array<int, object> */

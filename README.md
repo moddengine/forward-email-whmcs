@@ -8,7 +8,7 @@ WHMCS addon for managing Forward Email domains and forwarding aliases from activ
 
 - Adds an **Email Forwarding** link to eligible WHMCS hosting-service pages.
 - Creates Forward Email domains and connects them to one active WHMCS service and customer.
-- Creates, edits, and deletes forwarding aliases with one destination email address.
+- Creates, edits, and deletes forwarding aliases with one or more destination email addresses.
 - Replaces forwarding MX records and manages the exact Forward Email site-verification TXT record through WHMCS-DNS.
 - Removes Forward Email's automatic catch-all alias during setup; customers cannot create catch-all aliases through this addon.
 - Checks forwarding DNS verification immediately and provides manual verification retries while background cron retries recover pending setup and removal operations.

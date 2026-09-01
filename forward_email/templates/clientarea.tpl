@@ -59,7 +59,7 @@
                     <span class="input-group-addon">@{$domain|escape}</span>
                 </div>
                 <label class="sr-only" for="forward-email-destination">Destination</label>
-                <input id="forward-email-destination" class="form-control" type="email" name="destination" required maxlength="254" placeholder="you@example.net">
+                <input id="forward-email-destination" class="form-control" type="email" name="destination" multiple required placeholder="you@example.net, teammate@example.net">
                 <button class="btn btn-primary" type="submit">Add Forwarder</button>
             </form>
 
@@ -72,7 +72,7 @@
                         <tr>
                             <td>{$alias.name|escape}@{$domain|escape}</td>
                             <td>
-                                <input class="form-control input-sm" type="email" name="destination" value="{$alias.recipients_display|escape}" form="forward-email-update-{$alias.id|escape}" required maxlength="254" aria-label="Destination for {$alias.name|escape}">
+                                <input class="form-control input-sm" type="email" name="destination" value="{$alias.recipients_display|escape}" form="forward-email-update-{$alias.id|escape}" multiple required aria-label="Destinations for {$alias.name|escape}">
                             </td>
                             <td>
                                 <form id="forward-email-update-{$alias.id|escape}" method="post" action="index.php?m=forward_email&amp;service_id={$serviceId|escape}" style="display:inline-block">
